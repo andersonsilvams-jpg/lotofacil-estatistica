@@ -95,12 +95,30 @@ def pair_table(df, top=20):
     for nums in df["dezenas"]:
         vals = sorted(nums)
         for i in range(len(vals)):
-            for j in range(i+1, len(vals)):
+            for j in range(i + 1, len(vals)):
                 pairs[(vals[i], vals[j])] += 1
     return pd.DataFrame([
-        {"Par": f"{a:02d}–{b:02d}", "Ocorrências": c}
-        for (a,b), c in pairs.most_common(top)
+        {"Par": f"{a:02d}–{b:02d}", "Ocorrências": count}
+        for (a, b), count in pairs.most_common(top)
     ])
+
+def pair_matrix(df):
+    # Cada célula mostra em quantos concursos as duas dezenas apareceram juntas.
+    matrix = [[0 for _ in range(25)] for _ in range(25)]
+    for nums in df["dezenas"]:
+        values = sorted(nums)
+        for i in range(len(values)):
+            for j in range(i + 1, len(values)):
+                a, b = values[i] - 1, values[j] - 1
+                matrix[a][b] += 1
+                matrix[b][a] += 1
+
+    labels = [f"{n:02d}" for n in range(1, 26)]
+    result = pd.DataFrame(matrix, index=labels, columns=labels)
+    for i in range(25):
+        result.iat[i, i] = None
+    return result
+
 
 def build_games(strategy, qty, base_count, seed=None):
     rng = random.Random(seed)
@@ -190,26 +208,167 @@ with tab1:
 
 with tab2:
     st.subheader("Análise exclusiva dos concursos terminados em zero")
-    st.write(f"Foram identificados {len(final0)} concursos: 10, 20, 30, 40... até {int(final0['concurso'].max()) if len(final0) else 0}.")
+    st.write(
+        f"Foram identificados {len(final0)} concursos: 10, 20, 30, 40... "
+        f"até {int(final0['concurso'].max()) if len(final0) else 0}."
+    )
+
     if len(final0):
-        f0 = px.bar(final0_freq.sort_values("Número"), x="Dezena", y="Ocorrências",
-                    hover_data=["Frequência (%)"], title="Frequência das dezenas somente nos concursos final 0")
-        st.plotly_chart(f0, use_container_width=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**Ranking dos concursos final 0**")
-            st.dataframe(final0_freq, hide_index=True, use_container_width=True)
-        with col2:
-            st.markdown("**Pares mais recorrentes — final 0**")
-            st.dataframe(pair_table(final0, 20), hide_index=True, use_container_width=True)
-        st.markdown("**Comparação: histórico geral × final 0**")
-        compare = overall_freq[["Dezena","Frequência (%)"]].merge(
-            final0_freq[["Dezena","Frequência (%)"]], on="Dezena", suffixes=(" geral", " final 0"))
-        compare = compare.rename(columns={"Frequência (%) geral":"Geral (%)", "Frequência (%) final 0":"Final 0 (%)"})
-        compare_long = compare.melt(id_vars="Dezena", var_name="Recorte", value_name="Frequência (%)")
-        st.plotly_chart(px.bar(compare_long, x="Dezena", y="Frequência (%)", color="Recorte", barmode="group"), use_container_width=True)
+        total_final0 = len(final0)
+        expected_pct = 60.0  # Em cada sorteio, 15 das 25 dezenas são selecionadas.
+        above = int((final0_freq["Frequência (%)"] > expected_pct).sum())
+        below = int((final0_freq["Frequência (%)"] < expected_pct).sum())
+        equal = int((final0_freq["Frequência (%)"] == expected_pct).sum())
+
+        metric1, metric2, metric3, metric4 = st.columns(4)
+        metric1.metric("Concursos analisados", f"{total_final0:,}".replace(",", "."))
+        metric2.metric("Dezenas acima de 60%", str(above))
+        metric3.metric("Dezenas abaixo de 60%", str(below))
+        metric4.metric("Referência teórica", "60,00%")
+
+        st.divider()
+        st.markdown("### 🏆 Top 15 dezenas dos concursos final 0")
+        top15 = final0_freq.head(15).copy().reset_index(drop=True)
+        top15.insert(0, "Posição", range(1, len(top15) + 1))
+        top15 = top15.rename(columns={
+            "Dezena": "Dezena",
+            "Ocorrências": "Aparições",
+        })
+        st.dataframe(
+            top15[["Posição", "Dezena", "Aparições", "Frequência (%)"]],
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        st.markdown("### 🤝 Pares que mais saem juntos")
+        st.caption(
+            "A tabela apresenta as duplas mais recorrentes. O mapa de calor permite "
+            "comparar qualquer combinação entre as 25 dezenas."
+        )
+        pair_col, heat_col = st.columns([0.85, 1.5])
+        with pair_col:
+            st.markdown("**20 pares mais recorrentes**")
+            st.dataframe(
+                pair_table(final0, 20),
+                hide_index=True,
+                use_container_width=True,
+            )
+        with heat_col:
+            st.markdown("**Mapa de calor — coocorrência das dezenas**")
+            heatmap = px.imshow(
+                pair_matrix(final0),
+                aspect="auto",
+                color_continuous_scale="Viridis",
+                labels={
+                    "x": "Dezena",
+                    "y": "Dezena",
+                    "color": "Concursos juntos",
+                },
+                title="Quantidade de concursos em que cada par apareceu",
+            )
+            heatmap.update_layout(
+                xaxis_title="Dezena",
+                yaxis_title="Dezena",
+                coloraxis_colorbar_title="Concursos",
+            )
+            heatmap.update_traces(
+                hovertemplate=(
+                    "Dezena da coluna: %{x}<br>"
+                    "Dezena da linha: %{y}<br>"
+                    "Concursos juntos: %{z}<extra></extra>"
+                )
+            )
+            st.plotly_chart(heatmap, use_container_width=True)
+
+        st.divider()
+        st.markdown("### 🎯 Frequência observada versus expectativa teórica de 60%")
+        st.caption(
+            "Como são sorteadas 15 dezenas entre 25, cada dezena tem probabilidade "
+            "teórica de 15/25 = 60% em qualquer concurso. A diferença abaixo é "
+            "expressa em pontos percentuais (p.p.), não em aumento de probabilidade futura."
+        )
+
+        comparison = final0_freq[[
+            "Dezena", "Número", "Ocorrências", "Frequência (%)"
+        ]].copy()
+        comparison["Esperado (%)"] = expected_pct
+        comparison["Diferença (p.p.)"] = (
+            comparison["Frequência (%)"] - expected_pct
+        ).round(2)
+        comparison["Situação"] = comparison["Diferença (p.p.)"].apply(
+            lambda value: (
+                "Acima de 60%" if value > 0 else
+                "Abaixo de 60%" if value < 0 else
+                "Igual a 60%"
+            )
+        )
+
+        deviation_fig = px.bar(
+            comparison.sort_values("Número"),
+            x="Dezena",
+            y="Frequência (%)",
+            color="Situação",
+            hover_data=["Ocorrências", "Esperado (%)", "Diferença (p.p.)"],
+            color_discrete_map={
+                "Acima de 60%": "#16A36A",
+                "Abaixo de 60%": "#E09B35",
+                "Igual a 60%": "#8A8A8A",
+            },
+            title="Frequência observada de cada dezena nos concursos final 0",
+        )
+        deviation_fig.add_hline(
+            y=expected_pct,
+            line_dash="dash",
+            line_color="#E05252",
+            annotation_text="Referência teórica: 60%",
+            annotation_position="top left",
+        )
+        deviation_fig.update_layout(
+            xaxis_title="Dezena",
+            yaxis_title="Frequência nos concursos final 0 (%)",
+            legend_title="Comparação com 60%",
+        )
+        st.plotly_chart(deviation_fig, use_container_width=True)
+
+        st.markdown("**Tabela completa — diferença em relação aos 60%**")
+        st.dataframe(
+            comparison[[
+                "Dezena", "Ocorrências", "Frequência (%)",
+                "Esperado (%)", "Diferença (p.p.)", "Situação"
+            ]].sort_values("Frequência (%)", ascending=False),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        st.divider()
+        st.markdown("### Comparação entre o histórico geral e os concursos final 0")
+        compare = overall_freq[["Dezena", "Frequência (%)"]].merge(
+            final0_freq[["Dezena", "Frequência (%)"]],
+            on="Dezena",
+            suffixes=(" geral", " final 0"),
+        )
+        compare = compare.rename(columns={
+            "Frequência (%) geral": "Histórico geral (%)",
+            "Frequência (%) final 0": "Concursos final 0 (%)",
+        })
+        compare_long = compare.melt(
+            id_vars="Dezena",
+            var_name="Recorte",
+            value_name="Frequência (%)",
+        )
+        st.plotly_chart(
+            px.bar(
+                compare_long,
+                x="Dezena",
+                y="Frequência (%)",
+                color="Recorte",
+                barmode="group",
+                title="Frequência por dezena: todos os concursos versus final 0",
+            ),
+            use_container_width=True,
+        )
     else:
-        st.warning("Ainda não há concurso final 0 na base.")
+        st.warning("Ainda não há concursos final 0 na base.")
 
 with tab3:
     st.subheader("Frequência e dezenas há mais tempo sem sair")
