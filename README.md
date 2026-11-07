@@ -15,7 +15,7 @@ Painel Streamlit para análise do histórico da Lotofácil, com uma área dedica
 
 ## Atualização dos dados
 
-O GitHub Actions executa diariamente às 07h15 (horário de Campo Grande, UTC-3). Ele tenta baixar a planilha histórica diretamente do serviço de Loterias da CAIXA. Se esse download estiver indisponível, usa como contingência um CSV público compilado a partir dos resultados da CAIXA, publicado pelo ValorFinal sob licença CC BY 4.0, com atribuição.
+O GitHub Actions executa diariamente às 07h15 (horário de Campo Grande, UTC-4). Ele tenta baixar a planilha histórica diretamente do serviço de Loterias da CAIXA. Se esse download estiver indisponível, usa como contingência um CSV público compilado a partir dos resultados da CAIXA, publicado pelo ValorFinal sob licença CC BY 4.0, com atribuição.
 
 O histórico validado é salvo no arquivo dados/historico.csv. O painel lê esse arquivo versionado; se ainda não existir, utiliza as fontes de contingência.
 
