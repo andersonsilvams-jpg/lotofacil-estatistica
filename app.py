@@ -35,6 +35,25 @@ def get_json(url):
     response.raise_for_status()
     return response.json()
 
+def montar_historico(csv_df):
+    required = {"concurso", "data", "dezenas"}
+    if not required.issubset(set(csv_df.columns)):
+        raise ValueError("O CSV não contém as colunas esperadas.")
+    rows = []
+    for _, row in csv_df.iterrows():
+        nums = [int(x) for x in str(row["dezenas"]).replace(",", " ").split()]
+        if len(nums) != 15 or len(set(nums)) != 15 or any(n < 1 or n > 25 for n in nums):
+            continue
+        rows.append({
+            "concurso": int(row["concurso"]),
+            "data": pd.to_datetime(row["data"], errors="coerce"),
+            "dezenas": sorted(nums),
+            "dezenas_txt": " ".join(f"{n:02d}" for n in sorted(nums)),
+        })
+    if not rows:
+        raise ValueError("O histórico CSV não contém concursos válidos.")
+    return pd.DataFrame(rows).drop_duplicates("concurso").sort_values("concurso").reset_index(drop=True)
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_history():
     # Prioriza o CSV versionado no próprio GitHub, atualizado diariamente pelo Actions.
@@ -146,6 +165,7 @@ c2.metric("Último concurso", f"#{int(last_row['concurso'])}")
 c3.metric("Concursos final 0", f"{len(final0):,}".replace(",", "."))
 c4.metric("Data do último resultado", last_row["data"].strftime("%d/%m/%Y") if pd.notna(last_row["data"]) else "—")
 
+st.caption(f"Fonte dos dados: {data_source} · Último concurso disponível: {int(last_row['concurso'])}")
 st.subheader(f"Último resultado · Concurso {int(last_row['concurso'])}")
 st.markdown("".join([f'<span class="ball">{n:02d}</span>' for n in last_row["dezenas"]]), unsafe_allow_html=True)
 st.caption(f"Data: {last_row['data'].strftime('%d/%m/%Y') if pd.notna(last_row['data']) else 'não informada'} · Fonte: Loterias CAIXA")
