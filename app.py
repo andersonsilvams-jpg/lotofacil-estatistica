@@ -126,7 +126,7 @@ def build_games(strategy, qty, base_count, seed=None):
 
 st.title("🍀 Painel Estatístico da Lotofácil")
 st.caption("Histórico de resultados, análise especial dos concursos de final 0 e gerador de combinações.")
-st.info("Os resultados são consultados na API pública das Loterias CAIXA. Frequências históricas descrevem sorteios passados e não aumentam a chance de uma dezena no próximo concurso.")
+st.info("O painel utiliza o histórico de resultados das Loterias CAIXA, com cópia versionada no GitHub e fontes de contingência. Frequências históricas descrevem sorteios passados e não aumentam a chance de uma dezena no próximo concurso.")
 
 with st.sidebar:
     st.header("Controles")
