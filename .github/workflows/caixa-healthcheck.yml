@@ -1,0 +1,25 @@
+name: Atualizar cache de referência
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Executa diariamente às 09:15 UTC (06:15 em Campo Grande, UTC-3).
+    - cron: "15 9 * * *"
+
+jobs:
+  healthcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar endpoint público da CAIXA
+        run: |
+          curl --fail --silent --show-error \
+            -H "User-Agent: Mozilla/5.0" \
+            "https://servicebus2.caixa.gov.br/portaldeloterias/api/lotofacil" \
+            -o ultimo_concurso.json
+          python - <<'PY'
+          import json
+          with open("ultimo_concurso.json", encoding="utf-8") as f:
+              d=json.load(f)
+          print("Concurso disponível:", d.get("numero"))
+          print("Data:", d.get("dataApuracao"))
+          PY
