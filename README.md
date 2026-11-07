@@ -19,6 +19,22 @@ O GitHub Actions executa diariamente às 07h15 (horário de Campo Grande, UTC-4)
 
 O histórico validado é salvo no arquivo dados/historico.csv. O painel lê esse arquivo versionado; se ainda não existir, utiliza as fontes de contingência.
 
+
+## Estratégias do gerador
+
+O gerador oferece oito perfis de seleção:
+
+1. **Quentes:** prioriza as dezenas mais frequentes no histórico completo.
+2. **Frias:** prioriza as dezenas menos frequentes no histórico.
+3. **Mista:** combina dezenas quentes, frias e intermediárias.
+4. **Especial final 0:** usa somente o ranking dos concursos 10, 20, 30...
+5. **Tendência recente:** considera os últimos 50, 100 ou 200 concursos.
+6. **Mais atrasadas:** prioriza dezenas há mais concursos sem aparecer.
+7. **Equilibrada:** aplica filtros amplos de paridade, faixa numérica e soma.
+8. **Carteira diversificada:** reduz o peso de dezenas repetidas entre os jogos gerados, ampliando a cobertura da carteira.
+
+As opções quentes, frias, atrasadas e final 0 são formas de selecionar com base em estatísticas descritivas; elas não representam probabilidades futuras diferentes. Cada dezena tem probabilidade teórica de 60% de aparecer em um concurso e todas as combinações simples de 15 dezenas têm a mesma probabilidade.
+
 ## Publicar no Streamlit Community Cloud
 
 1. Acesse https://share.streamlit.io/
