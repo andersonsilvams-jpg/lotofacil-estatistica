@@ -3,8 +3,8 @@ name: Atualizar histórico da Lotofácil
 on:
   workflow_dispatch:
   schedule:
-    # Todos os dias às 07:15 no horário de Campo Grande (UTC-3).
-    - cron: "15 10 * * *"
+    # Todos os dias às 07:15 no horário de Campo Grande (UTC-4).
+    - cron: "15 11 * * *"
 
 permissions:
   contents: write
