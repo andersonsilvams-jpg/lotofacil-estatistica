@@ -884,6 +884,13 @@ with tab5:
                 "A liderança é descritiva e pode mudar com outra janela, quantidade de apostas ou nova simulação."
             )
 
+            st.caption(
+                f"Configuração utilizada: {config.get('window', '—')} concursos · "
+                f"{config.get('bets', '—')} apostas por estratégia/concurso · "
+                f"grupo candidato de {config.get('candidate_size', '—')} dezenas · "
+                f"tendência recente de {config.get('recent_window', '—')} concursos."
+            )
+
             st.markdown("### Resultado por estratégia")
             st.caption(
                 "As colunas de 11, 12, 13, 14 e 15 mostram a quantidade de apostas com aquele número "
