@@ -238,8 +238,8 @@ with tab4:
     with col2:
         qty = st.selectbox("Quantidade de jogos", [5, 10, 15, 20, 30], index=2)
     with col3:
-        base_count = st.slider("Dezenas fixas do ranking", min_value=0, max_value=14, value=8)
-    st.caption("O gerador fixa as primeiras dezenas do ranking escolhido e completa cada aposta com dezenas sorteadas entre as restantes. As apostas geradas são distintas.")
+        base_count = st.slider("Dezenas fixas do ranking", min_value=0, max_value=12, value=8)
+    st.caption("O gerador fixa até 12 dezenas do ranking escolhido e completa cada aposta com dezenas sorteadas entre as restantes. As apostas geradas são distintas.")
     if st.button("🎯 Gerar jogos", type="primary"):
         games = build_games(strategy, qty, base_count, seed=datetime.now().microsecond)
         st.session_state["games"] = games
