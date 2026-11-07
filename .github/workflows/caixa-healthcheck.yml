@@ -1,25 +1,38 @@
-name: Atualizar cache de referência
+name: Atualizar histórico da Lotofácil
 
 on:
   workflow_dispatch:
   schedule:
-    # Executa diariamente às 09:15 UTC (06:15 em Campo Grande, UTC-3).
-    - cron: "15 9 * * *"
+    # Todos os dias às 07:15 no horário de Campo Grande (UTC-3).
+    - cron: "15 10 * * *"
+
+permissions:
+  contents: write
 
 jobs:
-  healthcheck:
+  atualizar:
     runs-on: ubuntu-latest
     steps:
-      - name: Verificar endpoint público da CAIXA
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar dependências
         run: |
-          curl --fail --silent --show-error \
-            -H "User-Agent: Mozilla/5.0" \
-            "https://servicebus2.caixa.gov.br/portaldeloterias/api/lotofacil" \
-            -o ultimo_concurso.json
-          python - <<'PY'
-          import json
-          with open("ultimo_concurso.json", encoding="utf-8") as f:
-              d=json.load(f)
-          print("Concurso disponível:", d.get("numero"))
-          print("Data:", d.get("dataApuracao"))
-          PY
+          python -m pip install --upgrade pip
+          pip install pandas requests openpyxl xlrd
+      - name: Baixar e validar histórico
+        run: python atualizar_dados.py
+      - name: Salvar atualização no repositório
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dados/historico.csv
+          if git diff --cached --quiet; then
+            echo "O histórico não teve alterações."
+          else
+            git commit -m "Atualiza histórico da Lotofácil"
+            git push
+          fi
