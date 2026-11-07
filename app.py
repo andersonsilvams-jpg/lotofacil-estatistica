@@ -185,8 +185,12 @@ def build_games(
 
         elif strategy == "Mista — quentes + frias":
             hot = rng.sample(overall_rank[:10], 6)
-            cold = rng.sample(cold_rank[:10], 6)
-            middle = [n for n in range(1, 26) if n not in set(overall_rank[:10]) | set(cold_rank[:10])]
+            cold_pool = [n for n in cold_rank[:10] if n not in hot]
+            if len(cold_pool) < 6:
+                cold_pool = [n for n in cold_rank if n not in hot]
+            cold = rng.sample(cold_pool, 6)
+            used = set(hot) | set(cold)
+            middle = [n for n in range(1, 26) if n not in used]
             middle_pick = rng.sample(middle, 3)
             game = hot + cold + middle_pick
 
@@ -206,6 +210,9 @@ def build_games(
             game = rng.sample(range(1, 26), 15)
             if not is_balanced_game(game):
                 continue
+
+        elif strategy == "Aleatória — referência":
+            game = rng.sample(range(1, 26), 15)
 
         elif strategy == "Carteira diversificada":
             candidates = list(range(1, 26))
@@ -239,6 +246,155 @@ def build_games(
 
     return games
 
+
+
+BACKTEST_STRATEGIES = [
+    "Quentes — mais sorteadas",
+    "Frias — menos sorteadas",
+    "Mista — quentes + frias",
+    "Especial — concursos final 0",
+    "Tendência recente",
+    "Mais atrasadas",
+    "Equilibrada",
+    "Carteira diversificada",
+    "Aleatória — referência",
+]
+
+def rankings_for_training(training, recent_window, candidate_size):
+    """Calcula todos os rankings usando somente concursos anteriores ao alvo."""
+    general_frequency = frequency_table(training)
+    general_rank = general_frequency["Número"].tolist()
+    cold_rank_local = general_frequency.sort_values(
+        ["Ocorrências", "Número"], ascending=[True, True]
+    )["Número"].tolist()
+
+    zero_draws = training[training["concurso"] % 10 == 0]
+    if len(zero_draws):
+        zero_rank = frequency_table(zero_draws)["Número"].tolist()
+    else:
+        zero_rank = general_rank[:]
+
+    recent_draws = training.tail(min(recent_window, len(training)))
+    recent_rank = frequency_table(recent_draws)["Número"].tolist()
+
+    last_seen_local = {n: 0 for n in range(1, 26)}
+    for _, row in training.iloc[::-1].iterrows():
+        for number in row["dezenas"]:
+            if last_seen_local[number] == 0:
+                last_seen_local[number] = int(row["concurso"])
+        if all(last_seen_local.values()):
+            break
+
+    last_training_contest = int(training["concurso"].max())
+    overdue_rank_local = sorted(
+        range(1, 26),
+        key=lambda n: (last_training_contest - last_seen_local[n], -n),
+        reverse=True,
+    )
+
+    zero_frequency = frequency_table(zero_draws) if len(zero_draws) else None
+    if zero_frequency is not None:
+        zero_scores = {
+            n: float(zero_frequency.loc[zero_frequency["Número"] == n, "Frequência (%)"].iloc[0])
+            for n in range(1, 26)
+        }
+    else:
+        zero_scores = {n: 0.0 for n in range(1, 26)}
+
+    general_scores = {
+        n: float(general_frequency.loc[general_frequency["Número"] == n, "Frequência (%)"].iloc[0])
+        for n in range(1, 26)
+    }
+    combined_rank_local = sorted(
+        range(1, 26),
+        key=lambda n: (-(general_scores[n] + zero_scores[n]) / 2, n),
+    )
+
+    return {
+        "overall_rank": general_rank,
+        "cold_rank": cold_rank_local,
+        "final0_rank": zero_rank,
+        "recent_rank": recent_rank,
+        "overdue_rank": overdue_rank_local,
+        "combined_rank": combined_rank_local,
+        "candidate_size": candidate_size,
+    }
+
+def run_strategy_backtest(history, test_window, bets_per_draw, candidate_size, recent_window, progress=None):
+    """Walk-forward backtest: each target contest is scored using only earlier contests."""
+    start_position = max(1, len(history) - test_window)
+    target_positions = list(range(start_position, len(history)))
+    total_steps = max(1, len(target_positions) * len(BACKTEST_STRATEGIES))
+    step = 0
+    records = []
+
+    for position in target_positions:
+        training = history.iloc[:position].copy()
+        target = history.iloc[position]
+        actual_numbers = set(target["dezenas"])
+        rankings = rankings_for_training(training, recent_window, candidate_size)
+
+        for strategy_index, strategy_name in enumerate(BACKTEST_STRATEGIES):
+            step += 1
+            generated = build_games(
+                strategy=strategy_name,
+                quantity=bets_per_draw,
+                candidate_size=candidate_size,
+                overall_rank=rankings["overall_rank"],
+                cold_rank=rankings["cold_rank"],
+                final0_rank=rankings["final0_rank"],
+                recent_rank=rankings["recent_rank"],
+                overdue_rank=rankings["overdue_rank"],
+                seed=(int(target["concurso"]) * 1000 + strategy_index * 97 + recent_window),
+            )
+
+            for ticket_index, game in enumerate(generated, start=1):
+                hits = len(set(game) & actual_numbers)
+                records.append({
+                    "Estratégia": strategy_name,
+                    "Concurso testado": int(target["concurso"]),
+                    "Data": target["data"].strftime("%d/%m/%Y") if pd.notna(target["data"]) else "",
+                    "Aposta": ticket_index,
+                    "Dezenas apostadas": " ".join(f"{n:02d}" for n in game),
+                    "Acertos": hits,
+                    "Dezenas acertadas": " ".join(f"{n:02d}" for n in sorted(set(game) & actual_numbers)),
+                })
+
+            if progress is not None and (step % 10 == 0 or step == total_steps):
+                progress.progress(step / total_steps, text=f"Simulando estratégia {strategy_index + 1}/9 · concurso {int(target['concurso'])}")
+
+    return pd.DataFrame(records), len(target_positions)
+
+def summarize_backtest(backtest_df):
+    rows = []
+    for strategy_name in BACKTEST_STRATEGIES:
+        subset = backtest_df[backtest_df["Estratégia"] == strategy_name]
+        total = len(subset)
+        if total == 0:
+            continue
+        hit_counts = {
+            hits: int((subset["Acertos"] == hits).sum())
+            for hits in range(11, 16)
+        }
+        rows.append({
+            "Estratégia": strategy_name,
+            "Apostas": total,
+            "Até 10 acertos": int((subset["Acertos"] <= 10).sum()),
+            "11 acertos": hit_counts[11],
+            "12 acertos": hit_counts[12],
+            "13 acertos": hit_counts[13],
+            "14 acertos": hit_counts[14],
+            "15 acertos": hit_counts[15],
+            "Apostas com 11+": int((subset["Acertos"] >= 11).sum()),
+            "Taxa 11+ (%)": round((subset["Acertos"] >= 11).mean() * 100, 2),
+            "Taxa 12+ (%)": round((subset["Acertos"] >= 12).mean() * 100, 2),
+            "Média de acertos": round(float(subset["Acertos"].mean()), 3),
+            "Máximo de acertos": int(subset["Acertos"].max()),
+        })
+    return pd.DataFrame(rows).sort_values(
+        ["Taxa 11+ (%)", "Média de acertos"],
+        ascending=[False, False],
+    ).reset_index(drop=True)
 
 st.title("🍀 Painel Estatístico da Lotofácil")
 st.caption("Histórico de resultados, análise especial dos concursos de final 0 e gerador de combinações.")
@@ -301,8 +457,13 @@ st.subheader(f"Último resultado · Concurso {int(last_row['concurso'])}")
 st.markdown("".join([f'<span class="ball">{n:02d}</span>' for n in last_row["dezenas"]]), unsafe_allow_html=True)
 st.caption(f"Data: {last_row['data'].strftime('%d/%m/%Y') if pd.notna(last_row['data']) else 'não informada'} · Fonte: Loterias CAIXA")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 Visão geral", "🔟 Concursos final 0", "📈 Frequência e atrasos", "🎲 Gerador de jogos", "📚 Histórico"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📊 Visão geral",
+    "🔟 Concursos final 0",
+    "📈 Frequência e atrasos",
+    "🎲 Gerador de jogos",
+    "🧪 Comparador de estratégias",
+    "📚 Histórico",
 ])
 
 with tab1:
@@ -505,7 +666,7 @@ with tab3:
 with tab4:
     st.subheader("Gerador inteligente de combinações")
     st.caption(
-        "Escolha um perfil estatístico. Cada estratégia organiza os números de maneira diferente, "
+        "Escolha um perfil estatístico, incluindo uma referência totalmente aleatória. Cada estratégia organiza os números de maneira diferente, "
         "mas não altera a probabilidade matemática de uma combinação."
     )
 
@@ -518,6 +679,7 @@ with tab4:
         "Mais atrasadas",
         "Equilibrada",
         "Carteira diversificada",
+        "Aleatória — referência",
     ]
 
     gen_col1, gen_col2, gen_col3 = st.columns(3)
@@ -550,6 +712,7 @@ with tab4:
         "Mais atrasadas": "Prioriza as dezenas há mais concursos sem aparecer.",
         "Equilibrada": "Filtra combinações com distribuição de pares/ímpares, metade inferior/superior, faixas numéricas e soma dentro de intervalos amplos.",
         "Carteira diversificada": "Ao gerar vários jogos, reduz gradualmente o peso das dezenas já usadas para espalhar melhor a cobertura entre as apostas.",
+        "Aleatória — referência": "Gera combinações sem usar ranking histórico. Serve como grupo de comparação para as outras estratégias.",
     }
     st.info(strategy_descriptions[strategy])
 
@@ -635,7 +798,173 @@ with tab4:
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
+
 with tab5:
+    st.subheader("🧪 Comparador de estratégias — backtest histórico")
+    st.caption(
+        "O teste percorre concursos passados em sequência. Para cada concurso avaliado, "
+        "os rankings são recalculados usando somente resultados anteriores àquele sorteio."
+    )
+    st.info(
+        "Este é um teste retrospectivo, não uma previsão. O desempenho passado pode variar "
+        "por acaso e não altera as probabilidades matemáticas dos próximos concursos."
+    )
+
+    bt_col1, bt_col2, bt_col3 = st.columns(3)
+    with bt_col1:
+        bt_window = st.selectbox("Concursos a testar", [100, 200], index=0, key="bt_window")
+    with bt_col2:
+        bt_bets = st.selectbox("Apostas por estratégia em cada concurso", [1, 3, 5], index=0, key="bt_bets")
+    with bt_col3:
+        bt_candidate_size = st.slider(
+            "Grupo candidato das estratégias por ranking",
+            min_value=18,
+            max_value=25,
+            value=20,
+            key="bt_candidate_size",
+        )
+
+    bt_recent_window = st.selectbox(
+        "Janela da estratégia de tendência recente",
+        [50, 100, 200],
+        index=1,
+        key="bt_recent_window",
+    )
+
+    st.caption(
+        f"Serão comparadas {len(BACKTEST_STRATEGIES)} estratégias, incluindo uma referência aleatória. "
+        f"Com a configuração atual, serão geradas aproximadamente "
+        f"{bt_window * bt_bets * len(BACKTEST_STRATEGIES):,} apostas simuladas."
+    )
+
+    if st.button("▶️ Executar backtest", type="primary", key="run_backtest"):
+        progress_bar = st.progress(0, text="Preparando simulação...")
+        with st.spinner("Executando a simulação histórica sem vazamento de informação..."):
+            bt_results, bt_draws_tested = run_strategy_backtest(
+                history=history,
+                test_window=bt_window,
+                bets_per_draw=bt_bets,
+                candidate_size=bt_candidate_size,
+                recent_window=bt_recent_window,
+                progress=progress_bar,
+            )
+        progress_bar.empty()
+        st.session_state["backtest_results"] = bt_results
+        st.session_state["backtest_draws_tested"] = bt_draws_tested
+        st.session_state["backtest_config"] = {
+            "window": bt_window,
+            "bets": bt_bets,
+            "candidate_size": bt_candidate_size,
+            "recent_window": bt_recent_window,
+        }
+
+    if "backtest_results" in st.session_state:
+        results = st.session_state["backtest_results"]
+        config = st.session_state.get("backtest_config", {})
+        summary = summarize_backtest(results)
+
+        if results.empty:
+            st.warning("Nenhuma aposta foi gerada. Tente executar novamente.")
+        else:
+            contest_count = int(st.session_state.get("backtest_draws_tested", 0))
+            total_bets = len(results)
+            first_contest = int(results["Concurso testado"].min())
+            last_contest = int(results["Concurso testado"].max())
+            best_strategy = summary.iloc[0]["Estratégia"]
+            top_rate = float(summary.iloc[0]["Taxa 11+ (%)"])
+
+            metric1, metric2, metric3, metric4 = st.columns(4)
+            metric1.metric("Concursos avaliados", f"{contest_count:,}".replace(",", "."))
+            metric2.metric("Apostas simuladas", f"{total_bets:,}".replace(",", "."))
+            metric3.metric("Faixa testada", f"{first_contest}–{last_contest}")
+            metric4.metric("Maior taxa 11+", f"{top_rate:.2f}%".replace(".", ","))
+
+            st.markdown(
+                f"**Melhor resultado observado nesta simulação:** {best_strategy}. "
+                "A liderança é descritiva e pode mudar com outra janela, quantidade de apostas ou nova simulação."
+            )
+
+            st.markdown("### Resultado por estratégia")
+            st.caption(
+                "As colunas de 11, 12, 13, 14 e 15 mostram a quantidade de apostas com aquele número "
+                "exato de acertos. 'Apostas com 11+' é uma soma cumulativa."
+            )
+            st.dataframe(summary, hide_index=True, use_container_width=True)
+
+            distribution = []
+            for strategy_name in BACKTEST_STRATEGIES:
+                subset = results[results["Estratégia"] == strategy_name]
+                total = len(subset)
+                if not total:
+                    continue
+                distribution.append({
+                    "Estratégia": strategy_name,
+                    "Faixa de acertos": "0 a 10",
+                    "Apostas": int((subset["Acertos"] <= 10).sum()),
+                })
+                for hits in range(11, 16):
+                    distribution.append({
+                        "Estratégia": strategy_name,
+                        "Faixa de acertos": str(hits),
+                        "Apostas": int((subset["Acertos"] == hits).sum()),
+                    })
+
+            st.markdown("### Distribuição de acertos")
+            dist_fig = px.bar(
+                pd.DataFrame(distribution),
+                x="Estratégia",
+                y="Apostas",
+                color="Faixa de acertos",
+                barmode="stack",
+                category_orders={"Faixa de acertos": ["0 a 10", "11", "12", "13", "14", "15"]},
+                title="Quantidade de apostas por faixa de acertos",
+            )
+            dist_fig.update_layout(xaxis_title="Estratégia", yaxis_title="Quantidade de apostas")
+            st.plotly_chart(dist_fig, use_container_width=True)
+
+            st.markdown("### Taxa de apostas com 11 ou mais acertos")
+            rate_fig = px.bar(
+                summary.sort_values("Taxa 11+ (%)", ascending=False),
+                x="Estratégia",
+                y="Taxa 11+ (%)",
+                hover_data=["Apostas", "Apostas com 11+", "Média de acertos", "Máximo de acertos"],
+                title="Comparação da taxa observada de 11+ acertos",
+            )
+            st.plotly_chart(rate_fig, use_container_width=True)
+
+            st.markdown("### Detalhamento das apostas simuladas")
+            filter_strategy = st.selectbox(
+                "Filtrar estratégia",
+                ["Todas"] + BACKTEST_STRATEGIES,
+                key="bt_filter_strategy",
+            )
+            filtered = results if filter_strategy == "Todas" else results[results["Estratégia"] == filter_strategy]
+            st.dataframe(
+                filtered.sort_values(["Concurso testado", "Estratégia", "Aposta"]),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+            csv_bt = results.to_csv(index=False, sep=";", encoding="utf-8-sig")
+            st.download_button(
+                "⬇️ Baixar resultados do backtest (CSV)",
+                csv_bt,
+                "backtest_lotofacil.csv",
+                "text/csv",
+            )
+            excel_bt = io.BytesIO()
+            with pd.ExcelWriter(excel_bt, engine="openpyxl") as writer:
+                summary.to_excel(writer, sheet_name="Resumo", index=False)
+                results.to_excel(writer, sheet_name="Apostas simuladas", index=False)
+            st.download_button(
+                "📊 Baixar relatório do backtest (Excel)",
+                excel_bt.getvalue(),
+                "backtest_lotofacil.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+
+with tab6:
     st.subheader("Histórico de resultados")
     min_conc = int(history["concurso"].min())
     max_conc = int(history["concurso"].max())
