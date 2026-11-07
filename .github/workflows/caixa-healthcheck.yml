@@ -2,6 +2,13 @@ name: Atualizar histórico da Lotofácil
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "app.py"
+      - "dados_utils.py"
+      - "atualizar_dados.py"
+      - "requirements.txt"
+      - ".github/workflows/caixa-healthcheck.yml"
   schedule:
     # Todos os dias às 07:15 no horário de Campo Grande (UTC-4).
     - cron: "15 11 * * *"
