@@ -1,5 +1,4 @@
 import io
-import math
 import random
 from datetime import datetime
 
@@ -9,6 +8,8 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title="Lotofácil Estatística", page_icon="🍀", layout="wide")
+
+HISTORICO_URL = "https://raw.githubusercontent.com/andersonsilvams-jpg/lotofacil-estatistica/main/dados/historico.csv"
 
 CAIXA_URL = "https://servicebus2.caixa.gov.br/portaldeloterias/api/lotofacil"
 HEADERS = {
@@ -34,33 +35,28 @@ def get_json(url):
     response.raise_for_status()
     return response.json()
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def load_history():
-    last = get_json(CAIXA_URL)
-    max_n = int(last["numero"])
-    rows = []
-    progress = st.progress(0, text="Carregando resultados oficiais da CAIXA...")
-    # Consultar concursos em blocos sequenciais, com pausa pequena entre requisições.
-    for n in range(1, max_n + 1):
-        try:
-            item = get_json(f"{CAIXA_URL}/{n}")
-            dezenas = [int(x) for x in item.get("listaDezenas", [])]
-            if len(dezenas) == 15 and len(set(dezenas)) == 15 and all(1 <= x <= 25 for x in dezenas):
-                rows.append({
-                    "concurso": int(item["numero"]),
-                    "data": pd.to_datetime(item.get("dataApuracao"), dayfirst=True, errors="coerce"),
-                    "dezenas": sorted(dezenas),
-                    "dezenas_txt": " ".join(f"{x:02d}" for x in sorted(dezenas)),
-                })
-        except Exception:
-            continue
-        if n % 25 == 0 or n == max_n:
-            progress.progress(n / max_n, text=f"Carregando concurso {n} de {max_n}...")
-    progress.empty()
-    if not rows:
-        raise RuntimeError("Não foi possível obter resultados. Verifique o acesso à API da CAIXA.")
-    df = pd.DataFrame(rows).sort_values("concurso").reset_index(drop=True)
-    return df
+    # Prioriza o CSV versionado no próprio GitHub, atualizado diariamente pelo Actions.
+    try:
+        response = requests.get(HISTORICO_URL, timeout=30)
+        response.raise_for_status()
+        csv_df = pd.read_csv(io.StringIO(response.content.decode("utf-8-sig")), sep=";")
+        return montar_historico(csv_df), "CSV do GitHub (atualização automática diária)"
+    except Exception:
+        pass
+
+    # Contingência: CSV público compilado a partir dos resultados da CAIXA.
+    try:
+        from dados_utils import baixar_historico_publicado
+        return baixar_historico_publicado(), "CSV do ValorFinal, compilado a partir dos resultados da CAIXA"
+    except Exception:
+        pass
+
+    # Última contingência: planilha histórica oficial da CAIXA.
+    from dados_utils import baixar_historico_caixa
+    return baixar_historico_caixa(), "Planilha histórica oficial da CAIXA"
+
 
 def frequency_table(df):
     counts = {n: 0 for n in range(1, 26)}
@@ -116,14 +112,13 @@ st.info("Os resultados são consultados na API pública das Loterias CAIXA. Freq
 with st.sidebar:
     st.header("Controles")
     if st.button("🔄 Atualizar dados agora", use_container_width=True):
-        get_json.clear()
         load_history.clear()
         st.rerun()
-    st.caption("Cache de 1 hora. A atualização manual limpa o cache e consulta novamente a CAIXA.")
+    st.caption("O histórico é atualizado diariamente pelo GitHub Actions; o botão limpa o cache e consulta novamente as fontes.")
 
 try:
     with st.spinner("Verificando o último concurso..."):
-        history = load_history()
+        history, data_source = load_history()
 except Exception as exc:
     st.error(f"Falha ao carregar os resultados: {exc}")
     st.markdown(f"[Consultar resultados oficiais na CAIXA](https://loterias.caixa.gov.br/Paginas/Lotofacil.aspx)")
