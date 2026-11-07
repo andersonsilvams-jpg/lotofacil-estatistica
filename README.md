@@ -35,6 +35,19 @@ O gerador oferece oito perfis de seleção:
 
 As opções quentes, frias, atrasadas e final 0 são formas de selecionar com base em estatísticas descritivas; elas não representam probabilidades futuras diferentes. Cada dezena tem probabilidade teórica de 60% de aparecer em um concurso e todas as combinações simples de 15 dezenas têm a mesma probabilidade.
 
+## Backtest / Comparador de estratégias
+
+A aba **Comparador de estratégias** executa uma simulação walk-forward sobre os últimos 100 ou 200 concursos. Para cada concurso avaliado, o gerador é recalculado usando apenas resultados anteriores ao concurso-alvo, evitando vazamento de informação.
+
+O comparador mede:
+- Quantidade de apostas com exatamente 11, 12, 13, 14 e 15 acertos.
+- Taxas observadas de 11+ e 12+ acertos.
+- Média e máximo de acertos.
+- Distribuição dos resultados por estratégia.
+- Detalhamento por concurso e exportação em CSV/Excel.
+
+São comparadas as oito estratégias estatísticas do gerador mais uma referência aleatória. Os resultados são retrospectivos, dependem da configuração e da aleatoriedade do gerador e não indicam maior probabilidade nos próximos concursos.
+
 ## Publicar no Streamlit Community Cloud
 
 1. Acesse https://share.streamlit.io/
