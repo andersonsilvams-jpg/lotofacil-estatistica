@@ -120,27 +120,125 @@ def pair_matrix(df):
     return result
 
 
-def build_games(strategy, qty, base_count, seed=None):
+def weighted_pick(rng, candidates, quantity):
+    """Seleciona sem reposição, favorecendo a ordem do ranking recebido."""
+    pool = list(candidates)
+    weights = [float(len(pool) - index) for index in range(len(pool))]
+    selected = []
+    for _ in range(min(quantity, len(pool))):
+        total = sum(weights)
+        point = rng.random() * total
+        running = 0.0
+        chosen_index = len(pool) - 1
+        for index, weight in enumerate(weights):
+            running += weight
+            if point <= running:
+                chosen_index = index
+                break
+        selected.append(pool.pop(chosen_index))
+        weights.pop(chosen_index)
+    return selected
+
+def is_balanced_game(game):
+    odd_count = sum(number % 2 for number in game)
+    low_count = sum(number <= 13 for number in game)
+    band_counts = [
+        sum(start <= number <= start + 4 for number in game)
+        for start in [1, 6, 11, 16, 21]
+    ]
+    total = sum(game)
+    return (
+        6 <= odd_count <= 9
+        and 6 <= low_count <= 9
+        and all(1 <= count <= 5 for count in band_counts)
+        and 165 <= total <= 225
+    )
+
+def build_games(
+    strategy,
+    quantity,
+    candidate_size,
+    overall_rank,
+    cold_rank,
+    final0_rank,
+    recent_rank,
+    overdue_rank,
+    seed=None,
+):
     rng = random.Random(seed)
     games = []
-    for _ in range(qty):
-        if strategy == "Final 0":
-            pool = final0_rank
-        elif strategy == "Histórico geral":
-            pool = overall_rank
+    seen = set()
+    usage = {number: 0 for number in range(1, 26)}
+    attempts = 0
+    max_attempts = max(3000, quantity * 500)
+
+    while len(games) < quantity and attempts < max_attempts:
+        attempts += 1
+
+        if strategy == "Quentes — mais sorteadas":
+            candidates = overall_rank[:candidate_size]
+            game = weighted_pick(rng, candidates, 15)
+
+        elif strategy == "Frias — menos sorteadas":
+            candidates = cold_rank[:candidate_size]
+            game = weighted_pick(rng, candidates, 15)
+
+        elif strategy == "Mista — quentes + frias":
+            hot = rng.sample(overall_rank[:10], 6)
+            cold = rng.sample(cold_rank[:10], 6)
+            middle = [n for n in range(1, 26) if n not in set(overall_rank[:10]) | set(cold_rank[:10])]
+            middle_pick = rng.sample(middle, 3)
+            game = hot + cold + middle_pick
+
+        elif strategy == "Especial — concursos final 0":
+            candidates = final0_rank[:candidate_size]
+            game = weighted_pick(rng, candidates, 15)
+
+        elif strategy == "Tendência recente":
+            candidates = recent_rank[:candidate_size]
+            game = weighted_pick(rng, candidates, 15)
+
+        elif strategy == "Mais atrasadas":
+            candidates = overdue_rank[:candidate_size]
+            game = weighted_pick(rng, candidates, 15)
+
+        elif strategy == "Equilibrada":
+            game = rng.sample(range(1, 26), 15)
+            if not is_balanced_game(game):
+                continue
+
+        elif strategy == "Carteira diversificada":
+            candidates = list(range(1, 26))
+            weights = [1.0 / (1.0 + usage[n] * 0.7) for n in candidates]
+            pool = candidates.copy()
+            game = []
+            for _ in range(15):
+                total_weight = sum(weights)
+                point = rng.random() * total_weight
+                running = 0.0
+                chosen_index = len(pool) - 1
+                for index, weight in enumerate(weights):
+                    running += weight
+                    if point <= running:
+                        chosen_index = index
+                        break
+                game.append(pool.pop(chosen_index))
+                weights.pop(chosen_index)
+
         else:
-            pool = combined_rank
-        fixed = pool[:base_count]
-        remaining = [n for n in range(1, 26) if n not in fixed]
-        choose = 15 - len(fixed)
-        game = sorted(fixed + rng.sample(remaining, choose))
-        # Evita duplicação na lista gerada.
-        attempts = 0
-        while tuple(game) in games and attempts < 100:
-            game = sorted(fixed + rng.sample(remaining, choose))
-            attempts += 1
-        games.append(tuple(game))
+            game = rng.sample(range(1, 26), 15)
+
+        game = tuple(sorted(game))
+        if len(game) != 15 or len(set(game)) != 15 or game in seen:
+            continue
+
+        seen.add(game)
+        games.append(game)
+        for number in game:
+            usage[number] += 1
+
     return games
+
 
 st.title("🍀 Painel Estatístico da Lotofácil")
 st.caption("Histórico de resultados, análise especial dos concursos de final 0 e gerador de combinações.")
@@ -176,6 +274,21 @@ for n in range(1, 26):
     b = final0_freq.loc[final0_freq["Número"] == n, "Frequência (%)"].iloc[0] if len(final0) else 0
     combined_scores[n] = 0.5 * a + 0.5 * b
 combined_rank = sorted(range(1,26), key=lambda n: (-combined_scores[n], n))
+
+cold_freq = overall_freq.sort_values(["Ocorrências", "Número"], ascending=[True, True]).reset_index(drop=True)
+cold_rank = cold_freq["Número"].tolist()
+
+last_seen = {n: 0 for n in range(1, 26)}
+for _, history_row in history.iterrows():
+    for n in history_row["dezenas"]:
+        last_seen[n] = int(history_row["concurso"])
+latest_contest = int(history["concurso"].max())
+overdue_rank = sorted(
+    range(1, 26),
+    key=lambda n: (latest_contest - last_seen[n], -n),
+    reverse=True,
+)
+
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Concursos carregados", f"{len(history):,}".replace(",", "."))
@@ -390,40 +503,137 @@ with tab3:
     st.bar_chart(gaps.set_index("Dezena")["Atraso atual"])
 
 with tab4:
-    st.subheader("Gerador de combinações")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        strategy = st.selectbox("Critério de seleção", ["Histórico geral", "Final 0", "Combinado"])
-    with col2:
+    st.subheader("Gerador inteligente de combinações")
+    st.caption(
+        "Escolha um perfil estatístico. Cada estratégia organiza os números de maneira diferente, "
+        "mas não altera a probabilidade matemática de uma combinação."
+    )
+
+    strategy_options = [
+        "Quentes — mais sorteadas",
+        "Frias — menos sorteadas",
+        "Mista — quentes + frias",
+        "Especial — concursos final 0",
+        "Tendência recente",
+        "Mais atrasadas",
+        "Equilibrada",
+        "Carteira diversificada",
+    ]
+
+    gen_col1, gen_col2, gen_col3 = st.columns(3)
+    with gen_col1:
+        strategy = st.selectbox("Perfil de geração", strategy_options)
+    with gen_col2:
         qty = st.selectbox("Quantidade de jogos", [5, 10, 15, 20, 30], index=2)
-    with col3:
-        base_count = st.slider("Dezenas fixas do ranking", min_value=0, max_value=12, value=8)
-    st.caption("O gerador fixa até 12 dezenas do ranking escolhido e completa cada aposta com dezenas sorteadas entre as restantes. As apostas geradas são distintas.")
+    with gen_col3:
+        candidate_size = st.slider(
+            "Tamanho do grupo candidato",
+            min_value=18,
+            max_value=25,
+            value=20,
+            help="Nas estratégias baseadas em ranking, o gerador seleciona 15 dezenas dentro deste grupo, favorecendo as primeiras posições.",
+        )
+
+    recent_window = st.selectbox(
+        "Janela para tendência recente",
+        [50, 100, 200],
+        index=1,
+        help="Usada quando o perfil Tendência recente está selecionado.",
+    )
+
+    strategy_descriptions = {
+        "Quentes — mais sorteadas": "Dá maior peso às dezenas que mais apareceram em todo o histórico.",
+        "Frias — menos sorteadas": "Dá maior peso às dezenas com menor frequência histórica. 'Frias' descreve o passado, não uma menor chance no próximo sorteio.",
+        "Mista — quentes + frias": "Combina 6 dezenas do grupo mais frequente, 6 do menos frequente e 3 do grupo intermediário.",
+        "Especial — concursos final 0": "Usa o ranking calculado somente com concursos 10, 20, 30, 40 e assim por diante.",
+        "Tendência recente": f"Prioriza as dezenas mais frequentes nos últimos {recent_window} concursos.",
+        "Mais atrasadas": "Prioriza as dezenas há mais concursos sem aparecer.",
+        "Equilibrada": "Filtra combinações com distribuição de pares/ímpares, metade inferior/superior, faixas numéricas e soma dentro de intervalos amplos.",
+        "Carteira diversificada": "Ao gerar vários jogos, reduz gradualmente o peso das dezenas já usadas para espalhar melhor a cobertura entre as apostas.",
+    }
+    st.info(strategy_descriptions[strategy])
+
     if st.button("🎯 Gerar jogos", type="primary"):
-        games = build_games(strategy, qty, base_count, seed=datetime.now().microsecond)
-        st.session_state["games"] = games
+        recent_rank = frequency_table(history.tail(min(recent_window, len(history))))["Número"].tolist()
+        generated_games = build_games(
+            strategy=strategy,
+            quantity=qty,
+            candidate_size=candidate_size,
+            overall_rank=overall_rank,
+            cold_rank=cold_rank,
+            final0_rank=final0_rank,
+            recent_rank=recent_rank,
+            overdue_rank=overdue_rank,
+            seed=datetime.now().microsecond,
+        )
+        st.session_state["games"] = generated_games
         st.session_state["games_strategy"] = strategy
+        st.session_state["games_recent_window"] = recent_window
+        st.session_state["games_candidate_size"] = candidate_size
+
     if "games" in st.session_state:
-        st.write(f"**{len(st.session_state['games'])} jogos · estratégia {st.session_state.get('games_strategy','')}**")
-        for idx, game in enumerate(st.session_state["games"], 1):
+        current_games = st.session_state["games"]
+        st.write(
+            f"**{len(current_games)} jogos gerados · "
+            f"Perfil: {st.session_state.get('games_strategy', '')}**"
+        )
+
+        used_numbers = sorted({n for game in current_games for n in game})
+        avg_odd = sum(sum(n % 2 for n in game) for game in current_games) / len(current_games)
+        avg_sum = sum(sum(game) for game in current_games) / len(current_games)
+        summary1, summary2, summary3 = st.columns(3)
+        summary1.metric("Dezenas diferentes utilizadas", f"{len(used_numbers)} de 25")
+        summary2.metric("Média de ímpares por jogo", f"{avg_odd:.1f}".replace(".", ","))
+        summary3.metric("Soma média das dezenas", f"{avg_sum:.1f}".replace(".", ","))
+
+        for idx, game in enumerate(current_games, 1):
             balls = "".join([f'<span class="ball">{n:02d}</span>' for n in game])
+            odd_count = sum(n % 2 for n in game)
+            even_count = 15 - odd_count
+            low_count = sum(n <= 13 for n in game)
+            high_count = 15 - low_count
+            number_sum = sum(game)
             st.markdown(f"**Jogo {idx:02d}**<br>{balls}", unsafe_allow_html=True)
-        csv = pd.DataFrame([
-            {"Jogo": i+1, **{f"D{j+1:02d}": f"{n:02d}" for j,n in enumerate(game)}}
-            for i, game in enumerate(st.session_state["games"])
-        ]).to_csv(index=False, sep=";", encoding="utf-8-sig")
-        st.download_button("⬇️ Baixar jogos em CSV", csv, "jogos_lotofacil.csv", "text/csv")
+            st.caption(
+                f"Pares: {even_count} · Ímpares: {odd_count} · "
+                f"01–13: {low_count} · 14–25: {high_count} · Soma: {number_sum}"
+            )
+
+        games_df = pd.DataFrame([
+            {
+                "Jogo": i + 1,
+                **{f"D{j + 1:02d}": f"{n:02d}" for j, n in enumerate(game)},
+                "Pares": 15 - sum(n % 2 for n in game),
+                "Ímpares": sum(n % 2 for n in game),
+                "Soma": sum(game),
+            }
+            for i, game in enumerate(current_games)
+        ])
+
+        csv_data = games_df.to_csv(index=False, sep=";", encoding="utf-8-sig")
+        st.download_button(
+            "⬇️ Baixar jogos em CSV",
+            csv_data,
+            "jogos_lotofacil.csv",
+            "text/csv",
+        )
+
         excel_buffer = io.BytesIO()
+        recent_export = frequency_table(
+            history.tail(min(st.session_state.get("games_recent_window", 100), len(history)))
+        )
         with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-            pd.DataFrame([
-                {"Jogo": i+1, **{f"D{j+1:02d}": f"{n:02d}" for j,n in enumerate(game)}}
-                for i, game in enumerate(st.session_state["games"])
-            ]).to_excel(writer, sheet_name="Jogos", index=False)
+            games_df.to_excel(writer, sheet_name="Jogos", index=False)
             overall_freq.to_excel(writer, sheet_name="Ranking geral", index=False)
+            cold_freq.to_excel(writer, sheet_name="Ranking frias", index=False)
             final0_freq.to_excel(writer, sheet_name="Ranking final 0", index=False)
-        st.download_button("📊 Baixar relatório Excel", excel_buffer.getvalue(),
-                           "relatorio_lotofacil.xlsx",
-                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            recent_export.to_excel(writer, sheet_name="Tendência recente", index=False)
+        st.download_button(
+            "📊 Baixar relatório Excel",
+            excel_buffer.getvalue(),
+            "relatorio_lotofacil.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 with tab5:
     st.subheader("Histórico de resultados")
