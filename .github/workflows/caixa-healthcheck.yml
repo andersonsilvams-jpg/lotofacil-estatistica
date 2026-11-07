@@ -23,6 +23,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pandas requests openpyxl xlrd
+      - name: Validar sintaxe Python
+        run: python -m py_compile app.py dados_utils.py atualizar_dados.py
+
       - name: Baixar e validar histórico
         run: python atualizar_dados.py
       - name: Salvar atualização no repositório
